@@ -103,14 +103,25 @@ def clean_cheapshark_data(raw_cheapshark_data):
 
     return cheapshark_data
 
-def create_final_datasets(stores_mapping, usd_to_gbp, cheapshark_data):
+def create_final_datasets(stores_mapping, usd_to_gbp, cheapshark_data, con):
+
+    #if cheapshark_data is empty, return empty dataframes
+    if not cheapshark_data:
+        return pd.DataFrame(), pd.DataFrame()
+    
     #FIRST DATASET: app id, game name
     #take the cleaned cheapshark data and create a dataframe with app id and game name. normalise columns to have consistent naming conventions
     games_df = pd.DataFrame(cheapshark_data)[['steamAppID', 'title']].rename(columns={'steamAppID': 'app_id', 'title': 'game_name'}).drop_duplicates(subset=['app_id'])
 
+    #convert app id to string
+    games_df['app_id'] = games_df['app_id'].astype(str)
+
     #SECOND DATASET: app id, store name, sale price (usd), sale price (gbp), normal price (usd), normal price (gbp), discount percentage, timestamp
     #take the cleaned cheapshark data and create a dataframe with app id, store id, sale price (usd), normal price (usd). normalise columns to have consistent naming conventions
     prices_df = pd.DataFrame(cheapshark_data)[['steamAppID', 'storeID', 'salePrice', 'normalPrice', 'savings']].rename(columns={'steamAppID': 'app_id', 'storeID': 'store_id', 'salePrice': 'sale_price_usd', 'normalPrice': 'normal_price_usd', 'savings': 'discount_percentage'})
+
+    #convert app id to string
+    prices_df['app_id'] = prices_df['app_id'].astype(str)
 
     #convert sale price and normal price to numeric values
     prices_df['sale_price_usd'] = pd.to_numeric(prices_df['sale_price_usd'])
@@ -126,17 +137,44 @@ def create_final_datasets(stores_mapping, usd_to_gbp, cheapshark_data):
     #add timestamp to the dataset
     prices_df['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    #save both dataframes to duckdb database with two tables: games and prices
-    con = duckdb.connect(database='data/steam_wishlist_deals.duckdb', read_only=False)
+    #only keep prices that haven't already been recorded today
+    today = datetime.today().date()
+    existing_today = con.execute("""SELECT app_id, store_id FROM prices WHERE CAST(timestamp AS DATE) = ?""", [today]).fetchdf()
 
-    #TODO: delete before finalising the code, this is just for testing purposes
-    #this drops tables if they already exist
-    con.execute("DROP TABLE games")
-    con.execute("DROP TABLE prices")
+    #if there are existing prices for today, merge the two dataframes and only keep the rows that don't already exist in the database
+    if not existing_today.empty:
+        #convert app id to string
+        existing_today['app_id'] = existing_today['app_id'].astype(str)
+
+        #merge the two dataframes and only keep the rows that don't already exist in the database
+        prices_df = prices_df.merge(existing_today, on=['app_id', 'store_id'], how='left', indicator=True)
+        prices_df = prices_df[prices_df['_merge'] == 'left_only'].drop(columns=['_merge'])
+
+    #add games that don't already exist
+    con.execute("""
+    INSERT INTO games (app_id, game_name) 
+    SELECT app_id, game_name
+    FROM games_df
+    WHERE NOT EXISTS (
+    SELECT 1
+    FROM games
+    WHERE games.app_id = games_df.app_id)
+    """)
+
+    #add new prices as new rows
+    if not prices_df.empty:
+        con.execute("""
+        INSERT INTO prices (app_id, store_id, sale_price_usd, normal_price_usd, discount_percentage, store_name, sale_price_gbp, normal_price_gbp, timestamp)
+        SELECT app_id, store_id, sale_price_usd, normal_price_usd, discount_percentage, store_name, sale_price_gbp, normal_price_gbp, timestamp
+        FROM prices_df
+        """)
+
+    #save both dataframes to duckdb database with two tables: games and prices
+    #con = duckdb.connect(database='data/steam_wishlist_deals.duckdb', read_only=False)
 
     #this runs once to create the tables in the database
-    con.execute("""CREATE TABLE games AS SELECT * FROM games_df""")
-    con.execute("""CREATE TABLE prices AS SELECT * FROM prices_df""")
+    #con.execute("""CREATE TABLE games AS SELECT * FROM games_df""")
+    #con.execute("""CREATE TABLE prices AS SELECT * FROM prices_df""")
 
     #this runs every time to insert new data into the tables
     #con.execute("""INSERT INTO games SELECT * FROM games_df""")
@@ -172,7 +210,9 @@ def main(user_id):
     cheapshark_data = clean_cheapshark_data(raw_cheapshark_data)
     print("Cleaned CheapShark Data:")
 
-    games_df, prices_df = create_final_datasets(stores_mapping, usd_to_gbp, cheapshark_data)
+    con = duckdb.connect(database='data/steam_wishlist_deals.duckdb',read_only=False)
+
+    games_df, prices_df = create_final_datasets(stores_mapping, usd_to_gbp, cheapshark_data, con)
     print("Final Datasets:")
 
     #extract app id from steam_data and use it to loop through queries to get top 4 cheapest store prices for each game in the wishlist.
@@ -185,6 +225,7 @@ def main(user_id):
     JOIN games g
     ON p.app_id = g.app_id
     WHERE p.app_id = ANY(?)
+    AND CAST(p.timestamp AS DATE) = ?
     AND p.store_name != 'Steam'
     QUALIFY ROW_NUMBER() OVER (
     PARTITION BY p.app_id
@@ -200,13 +241,15 @@ def main(user_id):
     JOIN games g
     ON p.app_id = g.app_id
     WHERE p.app_id = ANY(?)
+    AND CAST(p.timestamp AS DATE) = ?
     AND p.store_name = 'Steam'
 
     ORDER BY app_id, sale_price_gbp ASC
     """
 
-    con = duckdb.connect(database='data/steam_wishlist_deals.duckdb', read_only=True)
-    cheapest_stores_df = con.execute(cheapest_query, (wishlist_app_ids, wishlist_app_ids)).fetchdf()
+    today = datetime.today().date()
+
+    cheapest_stores_df = con.execute(cheapest_query, (wishlist_app_ids, today, wishlist_app_ids, today)).fetchdf()
 
     print("Cheapest Stores Data:")
     print(cheapest_stores_df)
