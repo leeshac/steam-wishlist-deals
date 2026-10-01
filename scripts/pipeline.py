@@ -169,16 +169,9 @@ def create_final_datasets(stores_mapping, usd_to_gbp, cheapshark_data, con):
         FROM prices_df
         """)
 
-    #save both dataframes to duckdb database with two tables: games and prices
-    #con = duckdb.connect(database='data/steam_wishlist_deals.duckdb', read_only=False)
-
     #this runs once to create the tables in the database
     #con.execute("""CREATE TABLE games AS SELECT * FROM games_df""")
     #con.execute("""CREATE TABLE prices AS SELECT * FROM prices_df""")
-
-    #this runs every time to insert new data into the tables
-    #con.execute("""INSERT INTO games SELECT * FROM games_df""")
-    #con.execute("""INSERT INTO prices SELECT * FROM prices_df""")
 
     return games_df, prices_df
 
