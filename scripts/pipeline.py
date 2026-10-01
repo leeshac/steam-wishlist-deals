@@ -145,10 +145,7 @@ def create_final_datasets(stores_mapping, usd_to_gbp, cheapshark_data):
     return games_df, prices_df
 
 
-def main():
-    #user id that is used to pull data from is recieved from a user input in the main function
-    user_id = input("Enter your Steam user ID: ")
-
+def main(user_id):
     #load stores.json data into a dictionary to be used for mapping store ids to store names
     with open("data/stores.json", "r") as f:
         stores_data = json.load(f)  
@@ -162,27 +159,21 @@ def main():
     #load steam data and save raw data
     raw_steam_data = load_steam_data(user_id)
     print("Raw Steam Data:")
-    #print(raw_steam_data)
 
     #clean steam data and save cleaned data
     steam_data = clean_steam_data(raw_steam_data)
     print("Cleaned Steam Data:")
-    #print(steam_data)
 
     #load cheapshark data and save raw data
     raw_cheapshark_data = load_cheapshark_data(steam_data)
     print("Raw CheapShark Data:")
-    #print(raw_cheapshark_data)
 
     #clean cheapshark data and save cleaned data
     cheapshark_data = clean_cheapshark_data(raw_cheapshark_data)
     print("Cleaned CheapShark Data:")
-    #print(cheapshark_data)
 
     games_df, prices_df = create_final_datasets(stores_mapping, usd_to_gbp, cheapshark_data)
     print("Final Datasets:")
-    #print(games_df)
-    #print(prices_df)
 
     #extract app id from steam_data and use it to loop through queries to get top 4 cheapest store prices for each game in the wishlist.
     wishlist_app_ids = [str(game['appid']) for game in steam_data]
@@ -220,8 +211,4 @@ def main():
     print("Cheapest Stores Data:")
     print(cheapest_stores_df)
 
-    return
-
-if __name__ == "__main__":
-    main()
-
+    return cheapest_stores_df
