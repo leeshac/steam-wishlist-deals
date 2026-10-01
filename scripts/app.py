@@ -40,8 +40,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 if st.button("Find Deals"):
+    #run the main function from pipeline.py and get the results
     results = main(user_id)
 
+    #loop through results and display the data in a table for each game
     for game_name, game_data in results.groupby("game_name"):
         st.subheader(game_name)
         game_data = game_data.reset_index(drop=True)
